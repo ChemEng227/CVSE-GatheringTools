@@ -1,0 +1,18 @@
+[project]
+name = "CVSE-GatheringTools"
+version = "0.1.0"
+description = "CVSE 收录信息收集（RPC Client）"
+authors = [
+    {name = "yhtq", email = "1414672068@qq.com"},
+]
+dependencies = ["pycapnp>=2.2.1"]
+requires-python = "==3.13.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.scripts]
+test = {call = "utils:main"}

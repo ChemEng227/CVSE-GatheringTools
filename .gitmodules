@@ -1,0 +1,3 @@
+[submodule "CVSE-API"]
+	path = CVSE-API
+	url = https://github.com/yhtq/CVSE-API.git
