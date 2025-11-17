@@ -13,6 +13,3 @@ license = {text = "MIT"}
 
 [tool.pdm]
 distribution = false
-
-[tool.pdm.scripts]
-test = {call = "utils:main"}
