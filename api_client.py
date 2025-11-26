@@ -1,10 +1,18 @@
+# CVSE 数据 RPC 服务客户端接口
+# 使用方法参考 test() 函数，但不要运行（否则会向数据库中加入无用数据）
+# 所有函数的参数和返回值都使用序列化格式
+# （也就是类型标注中的 CVSE_capnp.Cvse.xxx）
+# 内存效率比 Python 原生格式更高，因此建议在爬虫运行过程中也使用该格式记录数据
+# 具体 field 参考 CVSE-API/CVSE.capnp，或者本文件中 TypedDict 实现
+# 服务器进程在 ps -aux | grep CVSE-exe
+# 数据库样式可以使用 mongosh 查看，数据库名为 cvse_db
+# RPC 服务未限制调用端，该文件应当在远程网络也可执行
 import asyncio
 import enum
 import os
 import sys
-from datetime import datetime
-from datetime import timedelta
-from typing import Any, AsyncGenerator, Protocol, Iterable, NoReturn, TypedDict, TypeVar
+from datetime import datetime, timedelta
+from typing import AsyncGenerator, Iterable, NoReturn, Protocol, TypedDict, TypeVar
 
 import capnp
 
@@ -13,19 +21,19 @@ subdir = "CVSE-API"
 sys.path.append(os.path.join(os.path.dirname(current_script_path), subdir))
 import CVSE_capnp
 
-
-T = TypeVar("T")
+T = TypeVar("T", covariant=True)
 T1 = TypeVar("T1")
-T2 = TypeVar("T2")
+T2 = TypeVar("T2", covariant=True)
+
 
 class RankProtocol(Protocol[T]):
     value: str
+
 
 class Rank(enum.Enum):
     DOMESTIC = 1
     SV = 2
     UTAU = 3
-
 
 
 class RPCTime:
@@ -36,6 +44,7 @@ class RPCTime:
     @staticmethod
     def from_datetime(dt: datetime) -> "RPCTime":
         return RPCTime(int(dt.timestamp()), dt.microsecond * 1000)
+
     @staticmethod
     def minValue() -> "RPCTime":
         return RPCTime(0, 0)
@@ -43,9 +52,11 @@ class RPCTime:
     def to_datetime(self) -> datetime:
         return datetime.fromtimestamp(self.seconds + self.nanoseconds / 1e9)
 
+
 class RPCTimeProtocol(Protocol[T]):
     seconds: int
     nanoseconds: int
+
 
 class ModifyEntry(TypedDict):
     avid: str
@@ -55,6 +66,7 @@ class ModifyEntry(TypedDict):
     staff: str | None
     is_examined: bool | None
 
+
 class ModifyEntryProtocol(Protocol[T]):
     avid: str
     bvid: str
@@ -62,6 +74,7 @@ class ModifyEntryProtocol(Protocol[T]):
     is_republish: bool | None
     staff: str | None
     is_examined: bool | None
+
 
 class RecordingNewEntry(TypedDict):
     avid: str
@@ -77,7 +90,8 @@ class RecordingNewEntry(TypedDict):
     desc: str
     tags: list[str]
 
-class RecordingNewEntryProtocol(Protocol[T]):
+
+class RecordingNewEntryProtocol(Protocol[T, T1]):
     avid: str
     bvid: str
     title: str
@@ -102,7 +116,8 @@ class RecordingDataEntry(TypedDict):
     share: int
     date: RPCTime
 
-class RecordingDataEntryProtocol(Protocol[T]):
+
+class RecordingDataEntryProtocol(Protocol[T, T1]):
     avid: str
     bvid: str
     view: int
@@ -119,10 +134,10 @@ class Index(TypedDict):
     avid: str
     bvid: str
 
+
 class IndexProtocol(Protocol[T]):
     avid: str
     bvid: str
-
 
 
 def build_list_to_capnp(l: Iterable[T], builder) -> None:
@@ -157,6 +172,7 @@ def Rank_to_capnp(obj: Rank) -> RankProtocol[T]:
         case Rank.UTAU:
             rank.value = "utau"
     return rank
+
 
 def capnp_to_Rank(obj: RankProtocol[T]) -> Rank:
     match obj.value:
@@ -198,7 +214,7 @@ def ModifyEntry_to_capnp(obj: ModifyEntry) -> ModifyEntryProtocol[T]:
 
 def RecordingNewEntry_to_capnp(
     obj: RecordingNewEntry,
-) -> RecordingDataEntryProtocol[T]:
+) -> RecordingDataEntryProtocol[T, T1]:
     entry = CVSE_capnp.Cvse.RecordingNewEntry.new_message()
     entry.avid = obj["avid"]
     entry.bvid = obj["bvid"]
@@ -258,16 +274,16 @@ class CVSE_Client:
     # 内存效率比 Python 原生格式更高
     # 具体 field 参考 Protocol 定义即可
 
-    async def updateModifyEntry(
-        self, entries: list[ModifyEntryProtocol[T]]
-    ) -> None:
+    async def updateModifyEntry(self, entries: list[ModifyEntryProtocol[T]]) -> None:
         size = len(entries)
         request = self.cvse.updateModifyEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
         await request.send()
 
+    # 注意我们以 bvid 作为数据库中的唯一 id
+    # 因此相同 bvid 的项只会被插入一次，之后不会再插入（不影响其他项）
     async def updateNewEntry(
-        self, entries: list[RecordingDataEntryProtocol[T]]
+        self, entries: list[RecordingDataEntryProtocol[T, T1]]
     ) -> None:
         size = len(entries)
         request = self.cvse.updateNewEntry_request()
@@ -283,8 +299,9 @@ class CVSE_Client:
         await request.send()
 
     async def getAll(
-        self, 
-        get_unexamined: bool, get_unincluded: bool,
+        self,
+        get_unexamined: bool,
+        get_unincluded: bool,
         from_date: RPCTime,
         to_date: RPCTime,
     ) -> list[IndexProtocol[T]]:
@@ -303,10 +320,11 @@ class CVSE_Client:
 
     async def getAllInBatch(
         self,
-        get_unexamined: bool, get_unincluded: bool,
+        get_unexamined: bool,
+        get_unincluded: bool,
         duration: timedelta,
-        unbatch_at: datetime = datetime.strptime("2009-01-01", "%Y-%m-%d")
-    ) -> AsyncGenerator[list[IndexProtocol[T]], Any, NoReturn]:
+        unbatch_at: datetime = datetime.strptime("2009-01-01", "%Y-%m-%d"),
+    ) -> AsyncGenerator[list[IndexProtocol[T]], NoReturn]:
         """
         获取所有索引，分批获取，每批的时间间隔为 duration。
         迭代 end_time < unbatch_at 时，剩下的索引合并成一批。
@@ -316,17 +334,19 @@ class CVSE_Client:
         start_time = end_time - duration
         while end_time >= unbatch_at:
             indices = await self.getAll(
-                get_unexamined, get_unincluded,
+                get_unexamined,
+                get_unincluded,
                 RPCTime.from_datetime(start_time),
-                RPCTime.from_datetime(end_time)
+                RPCTime.from_datetime(end_time),
             )
             yield indices
             end_time = start_time
             start_time -= duration
         last_batch_indices = await self.getAll(
-            get_unexamined, get_unincluded,
+            get_unexamined,
+            get_unincluded,
             RPCTime.minValue(),
-            RPCTime.from_datetime(end_time)
+            RPCTime.from_datetime(end_time),
         )
         yield last_batch_indices
         raise StopAsyncIteration
@@ -334,7 +354,7 @@ class CVSE_Client:
     async def lookupMetaInfo(
         self,
         indices: list[IndexProtocol[T]],
-    ) -> list[RecordingDataEntryProtocol[T]]:
+    ) -> list[RecordingNewEntryProtocol[T, T1]]:
         request = self.cvse.lookupMetaInfo_request()
         build_list_to_capnp(indices, request.init("indices", len(indices)))
         response = await request.send()
@@ -428,7 +448,7 @@ async def __test() -> None:
     test_modify_entries: list[ModifyEntry] = [
         {
             "avid": "av1",
-            "bvid": "bv1",
+            "bvid": "BV1",
             "is_republish": True,
             "ranks": [],
             "staff": "sss",
@@ -436,7 +456,7 @@ async def __test() -> None:
         },
         {
             "avid": "av2",
-            "bvid": "bv2",
+            "bvid": "BV2",
             "is_republish": False,
             "ranks": [Rank.DOMESTIC],
             "staff": None,
@@ -444,15 +464,15 @@ async def __test() -> None:
         },
     ]
     test_new_entries1 = list(map(RecordingNewEntry_to_capnp, test_new_entries))
-    # await client.updateNewEntry(test_new_entries1)
+    await client.updateNewEntry(test_new_entries1)
     test_data_entries1 = list(map(RecordingDataEntry_to_capnp, test_data_entries))
     test_data_entries2 = test_data_entries1 * 100
     test_modify_entries1 = list(map(ModifyEntry_to_capnp, test_modify_entries))
     task1 = asyncio.create_task(client.updateRecordingDataEntry(test_data_entries2))
     task2 = asyncio.create_task(client.updateModifyEntry(test_modify_entries1))
     await asyncio.gather(task1, task2)
-    all_info: list[IndexProtocol[T]] = []
-    async for batch in client.getAllInBatch(True, True):
+    all_info: list[IndexProtocol] = []
+    async for batch in client.getAllInBatch(True, True, timedelta(days=60)):
         all_info.extend(batch)
     all_meta_info = await client.lookupMetaInfo(all_info)
     for index in all_info:
