@@ -3,7 +3,8 @@ import enum
 import os
 import sys
 from datetime import datetime
-from typing import Any, Iterable, TypedDict, TypeVar
+from datetime import timedelta
+from typing import Any, AsyncGenerator, Protocol, Iterable, NoReturn, TypedDict, TypeVar
 
 import capnp
 
@@ -13,10 +14,18 @@ sys.path.append(os.path.join(os.path.dirname(current_script_path), subdir))
 import CVSE_capnp
 
 
+T = TypeVar("T")
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+
+class RankProtocol(Protocol[T]):
+    value: str
+
 class Rank(enum.Enum):
     DOMESTIC = 1
     SV = 2
     UTAU = 3
+
 
 
 class RPCTime:
@@ -27,10 +36,16 @@ class RPCTime:
     @staticmethod
     def from_datetime(dt: datetime) -> "RPCTime":
         return RPCTime(int(dt.timestamp()), dt.microsecond * 1000)
+    @staticmethod
+    def minValue() -> "RPCTime":
+        return RPCTime(0, 0)
 
     def to_datetime(self) -> datetime:
         return datetime.fromtimestamp(self.seconds + self.nanoseconds / 1e9)
 
+class RPCTimeProtocol(Protocol[T]):
+    seconds: int
+    nanoseconds: int
 
 class ModifyEntry(TypedDict):
     avid: str
@@ -40,6 +55,13 @@ class ModifyEntry(TypedDict):
     staff: str | None
     is_examined: bool | None
 
+class ModifyEntryProtocol(Protocol[T]):
+    avid: str
+    bvid: str
+    ranks: list[Rank] | None
+    is_republish: bool | None
+    staff: str | None
+    is_examined: bool | None
 
 class RecordingNewEntry(TypedDict):
     avid: str
@@ -55,6 +77,18 @@ class RecordingNewEntry(TypedDict):
     desc: str
     tags: list[str]
 
+class RecordingNewEntryProtocol(Protocol[T]):
+    avid: str
+    bvid: str
+    title: str
+    uploader: str
+    up_face: str
+    copyright: int
+    pubdate: RPCTimeProtocol[T1]
+    duration: int
+    page: int
+    cover: str
+
 
 class RecordingDataEntry(TypedDict):
     avid: str
@@ -68,13 +102,27 @@ class RecordingDataEntry(TypedDict):
     share: int
     date: RPCTime
 
+class RecordingDataEntryProtocol(Protocol[T]):
+    avid: str
+    bvid: str
+    view: int
+    favorite: int
+    coin: int
+    like: int
+    danmaku: int
+    reply: int
+    share: int
+    date: RPCTimeProtocol[T1]
+
 
 class Index(TypedDict):
     avid: str
     bvid: str
 
+class IndexProtocol(Protocol[T]):
+    avid: str
+    bvid: str
 
-T = TypeVar("T")
 
 
 def build_list_to_capnp(l: Iterable[T], builder) -> None:
@@ -84,22 +132,22 @@ def build_list_to_capnp(l: Iterable[T], builder) -> None:
     return capnp_list
 
 
-def RPCTime_to_capnp(obj: RPCTime) -> "CVSE_capnp.Cvse.Time":
+def RPCTime_to_capnp(obj: RPCTime) -> RPCTimeProtocol[T]:
     time = CVSE_capnp.Cvse.Time.new_message()
     time.seconds = obj.seconds
     time.nanoseconds = obj.nanoseconds
     return time
 
 
-def capnp_to_RPCTime(obj: "CVSE_capnp.Cvse.Time") -> RPCTime:
+def capnp_to_RPCTime(obj: RPCTimeProtocol[T]) -> RPCTime:
     return RPCTime(obj.seconds, obj.nanoseconds)
 
 
-def datetime_to_capnp(obj: datetime) -> "CVSE_capnp.Cvse.Time":
+def datetime_to_capnp(obj: datetime) -> RPCTimeProtocol[T]:
     return RPCTime_to_capnp(RPCTime.from_datetime(obj))
 
 
-def Rank_to_capnp(obj: Rank) -> "CVSE_capnp.Cvse.Rank":
+def Rank_to_capnp(obj: Rank) -> RankProtocol[T]:
     rank = CVSE_capnp.Cvse.Rank.new_message()
     match obj:
         case Rank.DOMESTIC:
@@ -110,8 +158,18 @@ def Rank_to_capnp(obj: Rank) -> "CVSE_capnp.Cvse.Rank":
             rank.value = "utau"
     return rank
 
+def capnp_to_Rank(obj: RankProtocol[T]) -> Rank:
+    match obj.value:
+        case "domestic":
+            return Rank.DOMESTIC
+        case "sv":
+            return Rank.SV
+        case "utau":
+            return Rank.UTAU
+    raise ValueError(f"Unknown rank value: {obj.value}")
 
-def ModifyEntry_to_capnp(obj: ModifyEntry) -> "CVSE_capnp.Cvse.ModifyEntry":
+
+def ModifyEntry_to_capnp(obj: ModifyEntry) -> ModifyEntryProtocol[T]:
     entry = CVSE_capnp.Cvse.ModifyEntry.new_message()
     entry.avid = obj["avid"]
     entry.bvid = obj["bvid"]
@@ -140,7 +198,7 @@ def ModifyEntry_to_capnp(obj: ModifyEntry) -> "CVSE_capnp.Cvse.ModifyEntry":
 
 def RecordingNewEntry_to_capnp(
     obj: RecordingNewEntry,
-) -> "CVSE_capnp.Cvse.RecordingNewEntry":
+) -> RecordingDataEntryProtocol[T]:
     entry = CVSE_capnp.Cvse.RecordingNewEntry.new_message()
     entry.avid = obj["avid"]
     entry.bvid = obj["bvid"]
@@ -174,7 +232,7 @@ def RecordingDataEntry_to_capnp(
     return entry
 
 
-def Index_to_capnp(obj: Index) -> "CVSE_capnp.Cvse.Index":
+def Index_to_capnp(obj: Index) -> IndexProtocol[T]:
     index = CVSE_capnp.Cvse.Index.new_message()
     index.avid = obj["avid"]
     index.bvid = obj["bvid"]
@@ -196,12 +254,12 @@ class CVSE_Client:
         return self
 
     # 所有函数的参数和返回值都使用序列化格式
-    # （也就是类型标注中的 CVSE_capnp.Cvse.xxx）
+    # （也就是类型标注中的 xxxxxProtocol）
     # 内存效率比 Python 原生格式更高
-    # 具体 field 参考 CVSE-API/CVSE.capnp
+    # 具体 field 参考 Protocol 定义即可
 
     async def updateModifyEntry(
-        self, entries: list["CVSE_capnp.Cvse.ModifyEntry"]
+        self, entries: list[ModifyEntryProtocol[T]]
     ) -> None:
         size = len(entries)
         request = self.cvse.updateModifyEntry_request()
@@ -209,7 +267,7 @@ class CVSE_Client:
         await request.send()
 
     async def updateNewEntry(
-        self, entries: list["CVSE_capnp.Cvse.RecordingNewEntry"]
+        self, entries: list[RecordingDataEntryProtocol[T]]
     ) -> None:
         size = len(entries)
         request = self.cvse.updateNewEntry_request()
@@ -224,23 +282,59 @@ class CVSE_Client:
         build_list_to_capnp(entries, request.init("entries", size))
         await request.send()
 
-    #
-    # 获取所有项的索引
-    # 若 get_unexamined 为 True，则返回值包含未经过收录的索引
-    # 若 get_unincluded 为 True，则返回值包含未收录在任何刊的索引
     async def getAll(
-        self, get_unexamined: bool, get_unincluded: bool
-    ) -> list["CVSE_capnp.Cvse.Index"]:
+        self, 
+        get_unexamined: bool, get_unincluded: bool,
+        from_date: RPCTime,
+        to_date: RPCTime,
+    ) -> list[IndexProtocol[T]]:
+        """
+        获取 pubdate 处于 [from_date, to_date) 的项的索引
+        若 get_unexamined 为 True，则返回值包含未经过收录的索引
+        若 get_unincluded 为 True，则返回值包含未收录在任何刊的索引
+        """
         request = self.cvse.getAll_request()
         request.get_unexamined = get_unexamined
         request.get_unincluded = get_unincluded
+        request.from_date = RPCTime_to_capnp(from_date)
+        request.to_date = RPCTime_to_capnp(to_date)
         response = await request.send()
         return response.indices
 
+    async def getAllInBatch(
+        self,
+        get_unexamined: bool, get_unincluded: bool,
+        duration: timedelta,
+        unbatch_at: datetime = datetime.strptime("2009-01-01", "%Y-%m-%d")
+    ) -> AsyncGenerator[list[IndexProtocol[T]], Any, NoReturn]:
+        """
+        获取所有索引，分批获取，每批的时间间隔为 duration。
+        迭代 end_time < unbatch_at 时，剩下的索引合并成一批。
+        返回值为一个异步生成器，生成每一批的索引列表。
+        """
+        end_time = datetime.now()
+        start_time = end_time - duration
+        while end_time >= unbatch_at:
+            indices = await self.getAll(
+                get_unexamined, get_unincluded,
+                RPCTime.from_datetime(start_time),
+                RPCTime.from_datetime(end_time)
+            )
+            yield indices
+            end_time = start_time
+            start_time -= duration
+        last_batch_indices = await self.getAll(
+            get_unexamined, get_unincluded,
+            RPCTime.minValue(),
+            RPCTime.from_datetime(end_time)
+        )
+        yield last_batch_indices
+        raise StopAsyncIteration
+
     async def lookupMetaInfo(
         self,
-        indices: list["CVSE_capnp.Cvse.Index"],
-    ) -> list["CVSE_capnp.Cvse.RecordingNewEntry"]:
+        indices: list[IndexProtocol[T]],
+    ) -> list[RecordingDataEntryProtocol[T]]:
         request = self.cvse.lookupMetaInfo_request()
         build_list_to_capnp(indices, request.init("indices", len(indices)))
         response = await request.send()
@@ -248,7 +342,7 @@ class CVSE_Client:
 
     async def lookupDataInfo(
         self,
-        indices: list["CVSE_capnp.Cvse.Index"],
+        indices: list[IndexProtocol[T]],
         from_date: RPCTime,
         to_date: RPCTime,
     ) -> list[list["CVSE_capnp.Cvse.RecordingDataEntry"]]:
@@ -357,7 +451,9 @@ async def __test() -> None:
     task1 = asyncio.create_task(client.updateRecordingDataEntry(test_data_entries2))
     task2 = asyncio.create_task(client.updateModifyEntry(test_modify_entries1))
     await asyncio.gather(task1, task2)
-    all_info = await client.getAll(True, True)
+    all_info: list[IndexProtocol[T]] = []
+    async for batch in client.getAllInBatch(True, True):
+        all_info.extend(batch)
     all_meta_info = await client.lookupMetaInfo(all_info)
     for index in all_info:
         print(f"avid: {index.avid}, bvid: {index.bvid}")
@@ -365,9 +461,8 @@ async def __test() -> None:
         print(
             f"avid: {meta_info.avid}, bvid: {meta_info.bvid}, title: {meta_info.title}"
         )
-    rpc_time_zero: RPCTime = RPCTime(0, 0)
     all_data = await client.lookupDataInfo(
-        all_info, rpc_time_zero, RPCTime.from_datetime(datetime.now())
+        all_info, RPCTime.minValue(), RPCTime.from_datetime(datetime.now())
     )
     for datas in all_data:
         for data in datas:
