@@ -12,7 +12,7 @@ import enum
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Iterable, NoReturn, Protocol, TypedDict, TypeVar
+from typing import AsyncGenerator, Iterable, NoReturn, Protocol, Sequence, TypedDict, TypeVar
 
 import capnp
 
@@ -49,6 +49,10 @@ class RPCTime:
     def minValue() -> "RPCTime":
         return RPCTime(0, 0)
 
+    @staticmethod
+    def now() -> "RPCTime":
+        return RPCTime.from_datetime(datetime.now())
+
     def to_datetime(self) -> datetime:
         return datetime.fromtimestamp(self.seconds + self.nanoseconds / 1e9)
 
@@ -70,10 +74,14 @@ class ModifyEntry(TypedDict):
 class ModifyEntryProtocol(Protocol[T]):
     avid: str
     bvid: str
-    ranks: list[Rank] | None
-    is_republish: bool | None
-    staff: str | None
-    is_examined: bool | None
+    ranks: list[Rank]
+    hasRanks: bool
+    isRepublish: bool
+    hasIsRepublish: bool
+    staffInfo: str
+    hasStaffInfo: bool
+    is_examined: bool
+    hasIsExamined: bool
 
 
 class RecordingNewEntry(TypedDict):
@@ -96,7 +104,7 @@ class RecordingNewEntryProtocol(Protocol[T, T1]):
     bvid: str
     title: str
     uploader: str
-    up_face: str
+    upFace: str
     copyright: int
     pubdate: RPCTimeProtocol[T1]
     duration: int
@@ -214,7 +222,7 @@ def ModifyEntry_to_capnp(obj: ModifyEntry) -> ModifyEntryProtocol[T]:
 
 def RecordingNewEntry_to_capnp(
     obj: RecordingNewEntry,
-) -> RecordingDataEntryProtocol[T, T1]:
+) -> RecordingNewEntryProtocol[T, T1]:
     entry = CVSE_capnp.Cvse.RecordingNewEntry.new_message()
     entry.avid = obj["avid"]
     entry.bvid = obj["bvid"]
@@ -233,7 +241,7 @@ def RecordingNewEntry_to_capnp(
 
 def RecordingDataEntry_to_capnp(
     obj: RecordingDataEntry,
-) -> "CVSE_capnp.Cvse.RecordingDataEntry":
+) -> RecordingDataEntryProtocol[T, T1]:
     entry = CVSE_capnp.Cvse.RecordingDataEntry.new_message()
     entry.avid = obj["avid"]
     entry.bvid = obj["bvid"]
@@ -256,7 +264,9 @@ def Index_to_capnp(obj: Index) -> IndexProtocol[T]:
 
 
 class CVSE_Client:
-    def __init__(self, connection, client, cvse):
+    def __init__(self, host, port, connection, client, cvse):
+        self.host = host
+        self.port = port
         self.connection = connection
         self.client = client
         self.cvse = cvse
@@ -266,15 +276,23 @@ class CVSE_Client:
         connection = await capnp.AsyncIoStream.create_connection(host=host, port=port)
         client = capnp.TwoPartyClient(connection)
         cvse = client.bootstrap().cast_as(CVSE_capnp.Cvse)
-        self = CVSE_Client(connection, client, cvse)
+        self = CVSE_Client(host, port, connection, client, cvse)
         return self
+
+    async def reconnect(self):
+        try:
+            self.connection = await capnp.AsyncIoStream.create_connection(host=self.host, port=self.port)
+            self.client = capnp.TwoPartyClient(self.connection)
+            self.cvse = self.client.bootstrap().cast_as(CVSE_capnp.Cvse)
+        except Exception as e:
+            print(f"Failed to reconnect: {e}")
 
     # 所有函数的参数和返回值都使用序列化格式
     # （也就是类型标注中的 xxxxxProtocol）
     # 内存效率比 Python 原生格式更高
     # 具体 field 参考 Protocol 定义即可
 
-    async def updateModifyEntry(self, entries: list[ModifyEntryProtocol[T]]) -> None:
+    async def updateModifyEntry(self, entries: Sequence[ModifyEntryProtocol[T]]) -> None:
         size = len(entries)
         request = self.cvse.updateModifyEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
@@ -282,8 +300,9 @@ class CVSE_Client:
 
     # 注意我们以 bvid 作为数据库中的唯一 id
     # 因此相同 bvid 的项只会被插入一次，之后不会再插入（不影响其他项）
+    # 如果发生了重复插入，该函数会抛出异常，但其余的项仍然被正常插入
     async def updateNewEntry(
-        self, entries: list[RecordingDataEntryProtocol[T, T1]]
+        self, entries: Sequence[RecordingNewEntryProtocol[T, T1]]
     ) -> None:
         size = len(entries)
         request = self.cvse.updateNewEntry_request()
@@ -291,7 +310,7 @@ class CVSE_Client:
         await request.send()
 
     async def updateRecordingDataEntry(
-        self, entries: list["CVSE_capnp.Cvse.RecordingDataEntry"]
+        self, entries: Sequence[RecordingDataEntryProtocol[T, T1]]
     ) -> None:
         size = len(entries)
         request = self.cvse.updateRecordingDataEntry_request()
@@ -354,7 +373,7 @@ class CVSE_Client:
     async def lookupMetaInfo(
         self,
         indices: list[IndexProtocol[T]],
-    ) -> list[RecordingNewEntryProtocol[T, T1]]:
+    ) -> Sequence[RecordingNewEntryProtocol[T, T1]]:
         request = self.cvse.lookupMetaInfo_request()
         build_list_to_capnp(indices, request.init("indices", len(indices)))
         response = await request.send()
@@ -365,7 +384,7 @@ class CVSE_Client:
         indices: list[IndexProtocol[T]],
         from_date: RPCTime,
         to_date: RPCTime,
-    ) -> list[list["CVSE_capnp.Cvse.RecordingDataEntry"]]:
+    ) -> list[list[RecordingDataEntryProtocol[T, T1]]]:
         request = self.cvse.lookupDataInfo_request()
         build_list_to_capnp(indices, request.init("indices", len(indices)))
         request.from_date = RPCTime_to_capnp(from_date)
@@ -378,7 +397,7 @@ class CVSE_Client:
         indices: list[CVSE_capnp.Cvse.Index],
         from_date: RPCTime,
         to_date: RPCTime,
-    ) -> list["CVSE_capnp.Cvse.RecordingDataEntry"]:
+    ) -> Sequence[RecordingDataEntryProtocol[T, T1]]:
         request = self.cvse.lookupOneDataInfo_request()
         build_list_to_capnp(indices, request.init("indices", len(indices)))
         request.from_date = RPCTime_to_capnp(from_date)
