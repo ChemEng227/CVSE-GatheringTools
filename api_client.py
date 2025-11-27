@@ -425,6 +425,7 @@ class CVSE_Client:
 
 
 async def __test() -> None:
+    # 仅作用法示例，不要运行，防止向数据库中加入无用数据
     client = await CVSE_Client.create("47.104.152.246", "8663")
     test_new_entries: list[RecordingNewEntry] = [
         {
