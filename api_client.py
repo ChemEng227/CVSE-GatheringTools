@@ -440,6 +440,10 @@ async def __test() -> None:
             "copyright": 1,
             "pubdate": RPCTime.from_datetime(datetime.now()),
             "page": 1,
+            "is_examined": False,
+            "ranks": [Rank.DOMESTIC, Rank.SV],
+            "is_republish": True,
+            "staff_info": "staff1",
         },
         {
             "avid": "av2",
@@ -454,6 +458,10 @@ async def __test() -> None:
             "copyright": 2,
             "pubdate": RPCTime.from_datetime(datetime.now()),
             "page": 2,
+            "is_examined": True,
+            "ranks": [Rank.UTAU],
+            "is_republish": False,
+            "staff_info": "staff2",
         },
     ]
     test_data_entries: list[RecordingDataEntry] = [
