@@ -97,6 +97,10 @@ class RecordingNewEntry(TypedDict):
     cover: str
     desc: str
     tags: list[str]
+    is_examined: bool
+    ranks: list[Rank]
+    is_republish: bool
+    staff_info: str
 
 
 class RecordingNewEntryProtocol(Protocol[T, T1]):
@@ -110,6 +114,12 @@ class RecordingNewEntryProtocol(Protocol[T, T1]):
     duration: int
     page: int
     cover: str
+    desc: str
+    tags: list[str]
+    is_examined: bool
+    ranks: list[RankProtocol[T1]]
+    is_republish: bool
+    staff_info: str
 
 
 class RecordingDataEntry(TypedDict):
@@ -236,6 +246,11 @@ def RecordingNewEntry_to_capnp(
     entry.cover = obj["cover"]
     entry.desc = obj["desc"]
     build_list_to_capnp(obj["tags"], entry.init("tags", len(obj["tags"])))
+    entry.staffInfo = obj["staff_info"]
+    ranks = map(Rank_to_capnp, obj["ranks"])
+    build_list_to_capnp(ranks, entry.init("ranks", len(obj["ranks"])))
+    entry.isExamined = obj["is_examined"]
+    entry.isRepublish = obj["is_republish"]
     return entry
 
 
@@ -302,11 +317,14 @@ class CVSE_Client:
     # 因此相同 bvid 的项只会被插入一次，之后不会再插入（不影响其他项）
     # 如果发生了重复插入，该函数会抛出异常，但其余的项仍然被正常插入
     async def updateNewEntry(
-        self, entries: Sequence[RecordingNewEntryProtocol[T, T1]]
+        self,
+        entries: Sequence[RecordingNewEntryProtocol[T, T1]],
+        replace: bool = False
     ) -> None:
         size = len(entries)
         request = self.cvse.updateNewEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
+        request.replace = replace
         await request.send()
 
     async def updateRecordingDataEntry(
