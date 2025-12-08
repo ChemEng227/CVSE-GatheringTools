@@ -359,6 +359,8 @@ class CVSE_Client:
     # （也就是类型标注中的 xxxxxProtocol）
     # 内存效率比 Python 原生格式更高
     # 具体 field 参考 Protocol 定义即可
+    # 由于暂时没搞明白的原因，一次性请求过多的 entry （20000左右？）可能会报错
+    # 建议使用之前的 asyncMapInBatch 方法分批处理
 
     async def updateModifyEntry(self, entries: Sequence[ModifyEntryProtocol[T]]) -> None:
         size = len(entries)
@@ -483,7 +485,7 @@ class CVSE_Client:
     # 注意 include_unexamined 参数不同的计算结果不会互相覆盖
     # 如果 lock 为 True，则在计算完成后锁定该期排行榜
     # 锁定后无法再次计算，再次调用该函数会报错
-    # 全部重新计算开销比较大（需要运行大约一分钟），不要过于频繁的调用
+    # 全部重新计算开销比较大（需要运行大约半分钟），不要过于频繁的调用
     async def reCalculateRankings(
         self,
         rank: Rank,
