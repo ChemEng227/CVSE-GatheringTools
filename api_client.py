@@ -12,7 +12,7 @@ import enum
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import AsyncGenerator, Iterable, NoReturn, Protocol, Sequence, TypedDict, TypeVar
+from typing import AsyncGenerator, Iterable, NoReturn, Protocol, Sequence, TypedDict, TypeVar, Callable, Awaitable
 
 import capnp
 
@@ -116,10 +116,10 @@ class RecordingNewEntryProtocol(Protocol[T, T1]):
     cover: str
     desc: str
     tags: list[str]
-    is_examined: bool
+    isExamined: bool
     ranks: list[RankProtocol[T1]]
-    is_republish: bool
-    staff_info: str
+    isRepublish: bool
+    staffInfo: str
 
 
 class RecordingDataEntry(TypedDict):
@@ -147,6 +147,43 @@ class RecordingDataEntryProtocol(Protocol[T, T1]):
     share: int
     date: RPCTimeProtocol[T1]
 
+class RankingInfoEntryProtocol(Protocol[T1, T2]):
+    avid: str
+    bvid: str
+    prev: RecordingDataEntryProtocol[T1, T2]
+    curr: RecordingDataEntryProtocol[T1, T2]
+    isNew: bool
+    view: int
+    like: int
+    share: int
+    favorite: int
+    coin: int
+    reply: int
+    danmaku: int
+    pointA: float
+    pointB: float
+    pointC: float
+    fixA: float
+    fixB: float
+    fixC: float
+    scoreA: float
+    scoreB: float
+    scoreC: float
+    totalScore: float
+    rank: int
+
+class RankingMetaInfoStatProtocol(Protocol):
+    count: int
+    totalView: int
+    totalLike: int
+    totalCoin: int
+    totalFavorite: int
+    totalShare: int
+    totalReply: int
+    totalDanmaku: int
+    totalNew: int
+    startTime: RPCTimeProtocol
+    endTime: RPCTimeProtocol
 
 class Index(TypedDict):
     avid: str
@@ -228,6 +265,22 @@ def ModifyEntry_to_capnp(obj: ModifyEntry) -> ModifyEntryProtocol[T]:
     else:
         entry.isExamined = False
     return entry
+
+
+
+async def asyncMapInBatch(
+    f: Callable[[list[T1]], Awaitable[T2]],
+    inputs: Sequence[T1],
+    batch_size: int = 4096
+) -> AsyncGenerator[T2, NoReturn]:
+    inputs = list(inputs)
+    total: int = len(inputs)
+    index: int = 0
+    while index < total:
+        result = await f(list(inputs[index: index + batch_size]))
+        yield result
+        index += batch_size
+
 
 
 def RecordingNewEntry_to_capnp(
@@ -423,6 +476,78 @@ class CVSE_Client:
         response = await request.send()
         return response.entries
 
+    # 重新对某期排行榜计算排名信息
+    # 自动排除 is_examined 为 True 以及 in 该 rank 为 False 的视频
+    # 如果 contain_unexamined 为 True，则也包含 is_examined 为 False 并被判定为该 rank 的视频
+    # 否则，只包含 is_examined 为 True 的视频
+    # 注意 include_unexamined 参数不同的计算结果不会互相覆盖
+    # 如果 lock 为 True，则在计算完成后锁定该期排行榜
+    # 锁定后无法再次计算，再次调用该函数会报错
+    # 全部重新计算开销比较大（需要运行大约一分钟），不要过于频繁的调用
+    async def reCalculateRankings(
+        self,
+        rank: Rank,
+        index: int,
+        contain_unexamined: bool,
+        lock: bool,
+    ) -> None:
+        request = self.cvse.reCalculateRankings_request()
+        request.rank = Rank_to_capnp(rank)
+        request.index = index
+        request.contain_unexamined = contain_unexamined
+        request.lock = lock
+        await request.send()
+
+    # 得到参数完全相同的，上一个接口计算的信息
+    # 涵盖排名 [from_rank, to_rank)
+    # 若尚未计算，则会返回空列表
+    async def getAllRankingInfo(
+        self,
+        rank: Rank,
+        index: int,
+        contain_unexamined: bool,
+        from_rank: int,
+        to_rank: int,
+    ) -> Sequence[IndexProtocol[T]]:
+        request = self.cvse.getAllRankingInfo_request()
+        request.rank = Rank_to_capnp(rank)
+        request.index = index
+        request.contain_unexamined = contain_unexamined
+        request.from_rank = from_rank
+        request.to_rank = to_rank
+        response = await request.send()
+        return response.entries
+
+    # 得到参数完全相同的，上一个接口计算的信息中，排名 [from_rank, to_rank) 的详细信息
+    # 注意，不保证每个 index 都找到结果。如果未找到，则跳过对应项
+    # 如果未计算，则返回空列表
+    async def lookupRankingInfo(
+        self,
+        rank: Rank,
+        index: int,
+        contain_unexamined: bool,
+        indices: list[IndexProtocol[T]]
+    ) -> Sequence[RankingInfoEntryProtocol[T1, T2]]:
+        request = self.cvse.lookupRankingInfo_request()
+        request.rank = Rank_to_capnp(rank)
+        request.index = index
+        request.contain_unexamined = contain_unexamined
+        build_list_to_capnp(indices, request.init("indices", len(indices)))
+        response = await request.send()
+        return response.entries
+
+    async def lookupRankingMetaInfo(
+        self,
+        rank: Rank,
+        index: int,
+        contain_unexamined: bool,
+    ) -> RankingMetaInfoStatProtocol:
+        request = self.cvse.lookupRankingMetaInfo_request()
+        request.rank = Rank_to_capnp(rank)
+        request.index = index
+        request.contain_unexamined = contain_unexamined
+        response = await request.send()
+        return response.stat
 
 async def __test() -> None:
     # 仅作用法示例，不要运行，防止向数据库中加入无用数据

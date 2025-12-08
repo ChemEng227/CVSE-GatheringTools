@@ -16,3 +16,4 @@ distribution = false
 
 [tool.pdm.scripts]
 test = {call = "api_client:test"}
+get_this_week = {call = "get_this_week:main"}
