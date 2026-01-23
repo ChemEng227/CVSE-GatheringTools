@@ -13,6 +13,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Iterable, NoReturn, Protocol, Sequence, TypedDict, TypeVar, Callable, Awaitable
+import socket
 
 import capnp
 
@@ -171,6 +172,16 @@ class RankingInfoEntryProtocol(Protocol[T1, T2]):
     scoreC: float
     totalScore: float
     rank: int
+    specialRank: str
+    rankPosition: str
+
+special_rank_normal = "normal"
+special_rank_sh = "sh"
+special_rank_hot = "hot"
+
+rank_position_main = "main"
+rank_position_side = "side"
+rank_position_none = "none"
 
 class RankingMetaInfoStatProtocol(Protocol):
     count: int
@@ -341,7 +352,15 @@ class CVSE_Client:
 
     @staticmethod
     async def create(host, port) -> "CVSE_Client":
-        connection = await capnp.AsyncIoStream.create_connection(host=host, port=port)
+        # connection = await capnp.AsyncIoStream.create_connection(host=host, port=port)
+        # sock = connection.transport.get_extra_info("socket")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        await asyncio.get_event_loop().sock_connect(sock, (host, int(port)))
+        connection = await capnp.AsyncIoStream.create_connection(sock=sock)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
         client = capnp.TwoPartyClient(connection)
         cvse = client.bootstrap().cast_as(CVSE_capnp.Cvse)
         self = CVSE_Client(host, port, connection, client, cvse)
