@@ -174,6 +174,7 @@ class RankingInfoEntryProtocol(Protocol[T1, T2]):
     rank: int
     specialRank: str
     rankPosition: str
+    onMainCountInTenWeeks: int
 
 special_rank_normal = "normal"
 special_rank_sh = "sh"
@@ -258,6 +259,7 @@ def ModifyEntry_to_capnp(obj: ModifyEntry) -> ModifyEntryProtocol[T]:
     entry.hasRanks = obj["ranks"] is not None
     entry.hasStaffInfo = obj["staff"] is not None
     entry.hasIsExamined = obj["is_examined"] is not None
+    entry.hasIsRepublish = obj["is_republish"] is not None
     if obj["ranks"] is not None:
         ranks = map(Rank_to_capnp, obj["ranks"])
         build_list_to_capnp(ranks, entry.init("ranks", len(obj["ranks"])))
@@ -359,7 +361,7 @@ class CVSE_Client:
         connection = await capnp.AsyncIoStream.create_connection(sock=sock)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
         client = capnp.TwoPartyClient(connection)
         cvse = client.bootstrap().cast_as(CVSE_capnp.Cvse)
