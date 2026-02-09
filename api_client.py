@@ -18,6 +18,7 @@ import socket
 import capnp
 
 current_script_path = os.path.abspath(__file__)
+auth_key_path = os.path.join(os.path.dirname(current_script_path), "auth_key")
 subdir = "CVSE-API"
 sys.path.append(os.path.join(os.path.dirname(current_script_path), subdir))
 import CVSE_capnp
@@ -351,6 +352,11 @@ class CVSE_Client:
         self.connection = connection
         self.client = client
         self.cvse = cvse
+        if os.path.exists(auth_key_path):
+            with open(auth_key_path, "r") as f:
+                self.auth_key = f.read().strip()
+        else:
+            self.auth_key = None
 
     @staticmethod
     async def create(host, port) -> "CVSE_Client":
@@ -387,6 +393,8 @@ class CVSE_Client:
         size = len(entries)
         request = self.cvse.updateModifyEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
+        assert self.auth_key is not None, "Auth key is required for updateModifyEntry"
+        request.authKey = self.auth_key
         await request.send()
 
     # 注意我们以 bvid 作为数据库中的唯一 id
@@ -401,6 +409,8 @@ class CVSE_Client:
         request = self.cvse.updateNewEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
         request.replace = replace
+        assert self.auth_key is not None, "Auth key is required for updateNewEntry"
+        request.authKey = self.auth_key
         await request.send()
 
     async def updateRecordingDataEntry(
@@ -409,6 +419,8 @@ class CVSE_Client:
         size = len(entries)
         request = self.cvse.updateRecordingDataEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
+        assert self.auth_key is not None, "Auth key is required for updateRecordingDataEntry"
+        request.authKey = self.auth_key
         await request.send()
 
     async def getAll(
@@ -519,6 +531,8 @@ class CVSE_Client:
         request.index = index
         request.contain_unexamined = contain_unexamined
         request.lock = lock
+        assert self.auth_key is not None, "Auth key is required for reCalculateRankings"
+        request.authKey = self.auth_key
         await request.send()
 
     # 得到参数完全相同的，上一个接口计算的信息
@@ -576,7 +590,7 @@ async def __test() -> None:
     # 仅作用法示例，不要运行，防止向数据库中加入无用数据
     if 2 * 2 * 2 * 2 == 16:  # 骗过 IDE 
         raise RuntimeError("This is only a usage example, do not run it.")
-    client = await CVSE_Client.create("47.104.152.246", "8663")
+    client = await CVSE_Client.create("47.104.152.246", "8613")
     test_new_entries: list[RecordingNewEntry] = [
         {
             "avid": "av1",
