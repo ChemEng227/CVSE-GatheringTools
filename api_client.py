@@ -394,7 +394,7 @@ class CVSE_Client:
         request = self.cvse.updateModifyEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
         assert self.auth_key is not None, "Auth key is required for updateModifyEntry"
-        request.authKey = self.auth_key
+        request.auth_token = self.auth_key
         await request.send()
 
     # 注意我们以 bvid 作为数据库中的唯一 id
@@ -410,7 +410,7 @@ class CVSE_Client:
         build_list_to_capnp(entries, request.init("entries", size))
         request.replace = replace
         assert self.auth_key is not None, "Auth key is required for updateNewEntry"
-        request.authKey = self.auth_key
+        request.auth_token = self.auth_key
         await request.send()
 
     async def updateRecordingDataEntry(
@@ -420,7 +420,7 @@ class CVSE_Client:
         request = self.cvse.updateRecordingDataEntry_request()
         build_list_to_capnp(entries, request.init("entries", size))
         assert self.auth_key is not None, "Auth key is required for updateRecordingDataEntry"
-        request.authKey = self.auth_key
+        request.auth_token = self.auth_key
         await request.send()
 
     async def getAll(
@@ -532,7 +532,7 @@ class CVSE_Client:
         request.contain_unexamined = contain_unexamined
         request.lock = lock
         assert self.auth_key is not None, "Auth key is required for reCalculateRankings"
-        request.authKey = self.auth_key
+        request.auth_token = self.auth_key
         await request.send()
 
     # 得到参数完全相同的，上一个接口计算的信息
@@ -588,7 +588,7 @@ class CVSE_Client:
 
 async def __test() -> None:
     # 仅作用法示例，不要运行，防止向数据库中加入无用数据
-    if 2 * 2 * 2 * 2 == 16:  # 骗过 IDE 
+    if 2 * 2 * 2 * 2 == 16:  # 骗过 IDE
         raise RuntimeError("This is only a usage example, do not run it.")
     client = await CVSE_Client.create("47.104.152.246", "8613")
     test_new_entries: list[RecordingNewEntry] = [
